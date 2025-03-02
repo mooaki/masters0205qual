@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <title>Cave Puzzle Visualizer</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            margin: 20px;
+        }
+        .left-panel {
+            width: 300px;
+            margin-right: 20px;
+        }
+        .right-panel {
+            flex-grow: 1;
+        }
+        textarea {
+            width: 100%;
+            height: 150px;
+            margin-bottom: 10px;
+        }
+        .controls {
+            margin-bottom: 10px;
+        }
+        .grid {
+            display: inline-grid;
+            grid-template-columns: repeat(20, 20px);
+            gap: 1px;
+            background-color: #ccc;
+        }
+        .cell {
+            width: 20px;
+            height: 20px;
+            text-align: center;
+            line-height: 20px;
+            font-size: 12px;
+            background-color: #fff;
+        }
+        .rock { background-color: #888; color: #fff; }
+        .ore { background-color: #aaf; }
+        .hole { background-color: #f88; }
+        .player { border: 2px solid #0f0; box-sizing: border-box; }
+    </style>
+</head>
+<body>
+    <div class="left-panel">
+        <h3>Input</h3>
+        <textarea id="input" placeholder="N M\nC_0\n...\nC_{N-1}"></textarea>
+        <h3>Output</h3>
+        <textarea id="output" placeholder="a_0 d_0\n...\na_{T-1} d_{T-1}"></textarea>
+        <div class="controls">
+            <button onclick="toggleAnimation()">▶/⏸</button>
+            <button onclick="stepBack()">◀</button>
+            <button onclick="stepForward()">▶</button>
+            <input type="range" id="turnSlider" min="0" value="0" style="width: 150px;">
+        </div>
+        <div>Turn: <span id="currentTurn">0</span></div>
+        <div>Score: <span id="score">0</span></div>
+        <div>K: <span id="totalOres">0</span></div>
+        <div>A: <span id="fallenOres">0</span></div>
+        <div>Speed: <input type="range" id="speedSlider" min="10" max="1000" value="200" step="50"></div>
+    </div>
+    <div class="right-panel">
+        <div id="grid" class="grid"></div>
+    </div>
+
+    <script>
+        let board = [];
+        let moves = [];
+        let states = [];
+        let playerPos = { i: 0, j: 0 };
+        let N = 20, M = 0, K = 0;
+        let animationInterval = null;
+
+        function parseInput() {
+            const input = document.getElementById('input').value.trim().split('\n');
+            [N, M] = input[0].split(' ').map(Number);
+            board = input.slice(1).map(row => row.split(''));
+            K = 0;
+            for (let i = 0; i < N; i++) {
+                for (let j = 0; j < N; j++) {
+                    if (/[a-z]/.test(board[i][j])) K++;
+                    if (board[i][j] === 'A') playerPos = { i, j };
+                }
+            }
+        }
+
+        function parseOutput() {
+            moves = document.getElementById('output').value.trim().split('\n')
+                .map(line => {
+                    const [action, dir] = line.split(' ');
+                    return { action: Number(action), dir };
+                });
+        }
+
+        function simulate() {
+            states = [{ board: board.map(row => [...row]), player: { ...playerPos }, A: 0 }];
+            let fallen = new Map();
+
+            for (let t = 0; t < moves.length; t++) {
+                const { action, dir } = moves[t];
+                const prevState = states[states.length - 1];
+                let newBoard = prevState.board.map(row => [...row]);
+                let newPlayer = { ...prevState.player };
+                let newA = prevState.A;
+                const { i, j } = newPlayer;
+                const di = dir === 'U' ? -1 : dir === 'D' ? 1 : 0;
+                const dj = dir === 'L' ? -1 : dir === 'R' ? 1 : 0;
+
+                if (action === 1) { // Move
+                    const ni = i + di, nj = j + dj;
+                    if (ni >= 0 && ni < N && nj >= 0 && nj < N) {
+                        newPlayer = { i: ni, j: nj };
+                    }
+                } else if (action === 2) { // Carry
+                    const ni = i + di, nj = j + dj;
+                    if (ni >= 0 && ni < N && nj >= 0 && nj < N && !/[a-z@]/.test(newBoard[ni][nj])) {
+                        if (/[a-z@]/.test(newBoard[i][j])) {
+                            newBoard[ni][nj] = newBoard[i][j];
+                            newBoard[i][j] = '.';
+                            newPlayer = { i: ni, j: nj };
+                            if (/[A-Z]/.test(board[ni][nj])) {
+                                newA = checkFall(newBoard[ni][nj], board[ni][nj], fallen, newA);
+                                newBoard[ni][nj] = board[ni][nj];
+                            }
+                        }
+                    }
+                } else if (action === 3) { // Roll
+                    if (/[a-z@]/.test(newBoard[i][j])) {
+                        let ci = i, cj = j;
+                        const item = newBoard[i][j];
+                        newBoard[i][j] = '.';
+                        while (true) {
+                            const ni = ci + di, nj = cj + dj;
+                            if (ni < 0 || ni >= N || nj < 0 || nj >= N || /[a-z@]/.test(newBoard[ni][nj])) {
+                                newBoard[ci][cj] = item;
+                                break;
+                            }
+                            if (/[A-Z]/.test(board[ni][nj])) {
+                                newA = checkFall(item, board[ni][nj], fallen, newA);
+                                break;
+                            }
+                            ci = ni;
+                            cj = nj;
+                        }
+                    }
+                }
+                states.push({ board: newBoard, player: newPlayer, A: newA });
+            }
+
+            function checkFall(item, hole, fallen, currentA) {
+                if (item === '@') return currentA;
+                const oreType = item.charCodeAt(0) - 'a'.charCodeAt(0);
+                const holeType = hole.charCodeAt(0) - 'A'.charCodeAt(0);
+                if (oreType === holeType) {
+                    fallen.set(hole, (fallen.get(hole) || 0) + 1);
+                    return currentA + 1;
+                }
+                return currentA;
+            }
+        }
+
+        function calculateScore(turn) {
+            const T = turn;
+            const A = states[turn].A;
+            if (T === 0) return '-';
+            return A === K ? Math.round(1e6 * (1 + Math.log2(10000 / T))) : Math.round(1e6 * A / K);
+        }
+
+        function renderState(turn) {
+            const state = states[turn];
+            const grid = document.getElementById('grid');
+            grid.innerHTML = '';
+            for (let i = 0; i < N; i++) {
+                for (let j = 0; j < N; j++) {
+                    const cell = document.createElement('div');
+                    cell.className = 'cell';
+                    cell.textContent = state.board[i][j];
+                    if (state.board[i][j] === '@') cell.classList.add('rock');
+                    if (/[a-z]/.test(state.board[i][j])) cell.classList.add('ore');
+                    if (/[A-Z]/.test(state.board[i][j])) cell.classList.add('hole');
+                    if (i === state.player.i && j === state.player.j) cell.classList.add('player');
+                    grid.appendChild(cell);
+                }
+            }
+            document.getElementById('currentTurn').textContent = turn;
+            document.getElementById('score').textContent = calculateScore(turn);
+            document.getElementById('totalOres').textContent = K;
+            document.getElementById('fallenOres').textContent = state.A;
+            document.getElementById('turnSlider').max = moves.length;
+            document.getElementById('turnSlider').value = turn;
+        }
+
+        function update() {
+            parseInput();
+            parseOutput();
+            simulate();
+            renderState(0);
+        }
+
+        function toggleAnimation() {
+            if (animationInterval) {
+                clearInterval(animationInterval);
+                animationInterval = null;
+            } else {
+                let turn = parseInt(document.getElementById('turnSlider').value);
+                const speed = parseInt(document.getElementById('speedSlider').value);
+                animationInterval = setInterval(() => {
+                    if (turn > moves.length) {
+                        clearInterval(animationInterval);
+                        animationInterval = null;
+                    } else {
+                        renderState(turn++);
+                    }
+                }, speed);
+            }
+        }
+
+        function stepForward() {
+            if (animationInterval) toggleAnimation();
+            let turn = parseInt(document.getElementById('turnSlider').value);
+            if (turn < moves.length) renderState(turn + 1);
+        }
+
+        function stepBack() {
+            if (animationInterval) toggleAnimation();
+            let turn = parseInt(document.getElementById('turnSlider').value);
+            if (turn > 0) renderState(turn - 1);
+        }
+
+        document.getElementById('turnSlider').oninput = (e) => {
+            if (animationInterval) toggleAnimation();
+            renderState(parseInt(e.target.value));
+        };
+        document.getElementById('input').onchange = update;
+        document.getElementById('output').onchange = update;
+        document.getElementById('speedSlider').onchange = () => {
+            if (animationInterval) {
+                clearInterval(animationInterval);
+                toggleAnimation(); // 速度変更後に再開
+            }
+        };
+
+        // Initial render
+        update();
+    </script>
+</body>
+</html>
