@@ -56,11 +56,11 @@
             <button onclick="stepForward()">▶</button>
             <input type="range" id="turnSlider" min="0" value="0" style="width: 150px;">
         </div>
-        <div>Turn: <span id="currentTurn">0</span></div>
+        <div>Turn: <span id="currentTurn">0</span> <span id="currentMove"></span></div>
         <div>Score: <span id="score">0</span></div>
         <div>K: <span id="totalOres">0</span></div>
         <div>A: <span id="fallenOres">0</span></div>
-        <div>Speed: <input type="range" id="speedSlider" min="10" max="1000" value="200" step="50"></div>
+        <div>Speed: <input type="range" id="speedSlider" min="50" max="1000" value="200" step="50"></div>
     </div>
     <div class="right-panel">
         <div id="grid" class="grid"></div>
@@ -186,6 +186,7 @@
                 }
             }
             document.getElementById('currentTurn').textContent = turn;
+            document.getElementById('currentMove').textContent = turn > 0 ? `(${moves[turn - 1].action} ${moves[turn - 1].dir})` : '';
             document.getElementById('score').textContent = calculateScore(turn);
             document.getElementById('totalOres').textContent = K;
             document.getElementById('fallenOres').textContent = state.A;
@@ -239,7 +240,7 @@
         document.getElementById('speedSlider').onchange = () => {
             if (animationInterval) {
                 clearInterval(animationInterval);
-                toggleAnimation(); // 速度変更後に再開
+                toggleAnimation();
             }
         };
 
