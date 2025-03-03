@@ -2,7 +2,7 @@
 <html lang="ja">
 <head>
     <meta charset="UTF-8">
-    <title>Cave Puzzle Visualizer</title>
+    <title>Cave Puzzle Visualizer (Optimized)</title>
     <style>
         body {
             font-family: Arial, sans-serif;
@@ -15,6 +15,7 @@
         }
         .right-panel {
             flex-grow: 1;
+            position: relative;
         }
         textarea {
             width: 100%;
@@ -23,6 +24,10 @@
         }
         .controls {
             margin-bottom: 10px;
+        }
+        .grid-container {
+            position: relative;
+            display: inline-block;
         }
         .grid {
             display: inline-grid;
@@ -42,6 +47,12 @@
         .ore { background-color: #aaf; }
         .hole { background-color: #f88; }
         .player { border: 2px solid #0f0; box-sizing: border-box; }
+        svg {
+            position: absolute;
+            top: 0;
+            left: 0;
+            pointer-events: none;
+        }
     </style>
 </head>
 <body>
@@ -63,7 +74,12 @@
         <div>Speed: <input type="range" id="speedSlider" min="50" max="1000" value="200" step="50"></div>
     </div>
     <div class="right-panel">
-        <div id="grid" class="grid"></div>
+        <div class="grid-container">
+            <div id="grid" class="grid"></div>
+            <svg id="lines" width="410" height="410">
+                <line id="moveLine" stroke-width="2" style="display: none;"></line>
+            </svg>
+        </div>
     </div>
 
     <script>
@@ -72,7 +88,8 @@
         let states = [];
         let playerPos = { i: 0, j: 0 };
         let N = 20, M = 0, K = 0;
-        let animationInterval = null;
+        let animationFrame = null;
+        let cells = []; // グリッドのセルを保持
 
         function parseInput() {
             const input = document.getElementById('input').value.trim().split('\n');
@@ -96,7 +113,7 @@
         }
 
         function simulate() {
-            states = [{ board: board.map(row => [...row]), player: { ...playerPos }, A: 0 }];
+            states = [{ board: board.map(row => [...row]), player: { ...playerPos }, A: 0, path: null }];
             let fallen = new Map();
 
             for (let t = 0; t < moves.length; t++) {
@@ -105,19 +122,21 @@
                 let newBoard = prevState.board.map(row => [...row]);
                 let newPlayer = { ...prevState.player };
                 let newA = prevState.A;
+                let path = null;
                 const { i, j } = newPlayer;
                 const di = dir === 'U' ? -1 : dir === 'D' ? 1 : 0;
                 const dj = dir === 'L' ? -1 : dir === 'R' ? 1 : 0;
 
-                if (action === 1) { // Move
+                if (action === 1) {
                     const ni = i + di, nj = j + dj;
                     if (ni >= 0 && ni < N && nj >= 0 && nj < N) {
                         newPlayer = { i: ni, j: nj };
                     }
-                } else if (action === 2) { // Carry
+                } else if (action === 2) {
                     const ni = i + di, nj = j + dj;
                     if (ni >= 0 && ni < N && nj >= 0 && nj < N && !/[a-z@]/.test(newBoard[ni][nj])) {
                         if (/[a-z@]/.test(newBoard[i][j])) {
+                            path = { from: { i, j }, to: { i: ni, j: nj }, type: 'carry' };
                             newBoard[ni][nj] = newBoard[i][j];
                             newBoard[i][j] = '.';
                             newPlayer = { i: ni, j: nj };
@@ -127,19 +146,22 @@
                             }
                         }
                     }
-                } else if (action === 3) { // Roll
+                } else if (action === 3) {
                     if (/[a-z@]/.test(newBoard[i][j])) {
                         let ci = i, cj = j;
                         const item = newBoard[i][j];
                         newBoard[i][j] = '.';
+                        const start = { i: ci, j: cj };
                         while (true) {
                             const ni = ci + di, nj = cj + dj;
                             if (ni < 0 || ni >= N || nj < 0 || nj >= N || /[a-z@]/.test(newBoard[ni][nj])) {
                                 newBoard[ci][cj] = item;
+                                path = { from: start, to: { i: ci, j: cj }, type: 'roll' };
                                 break;
                             }
                             if (/[A-Z]/.test(board[ni][nj])) {
                                 newA = checkFall(item, board[ni][nj], fallen, newA);
+                                path = { from: start, to: { i: ni, j: nj }, type: 'roll' };
                                 break;
                             }
                             ci = ni;
@@ -147,7 +169,7 @@
                         }
                     }
                 }
-                states.push({ board: newBoard, player: newPlayer, A: newA });
+                states.push({ board: newBoard, player: newPlayer, A: newA, path });
             }
 
             function checkFall(item, hole, fallen, currentA) {
@@ -169,22 +191,52 @@
             return A === K ? Math.round(1e6 * (1 + Math.log2(10000 / T))) : Math.round(1e6 * A / K);
         }
 
-        function renderState(turn) {
-            const state = states[turn];
+        function initGrid() {
             const grid = document.getElementById('grid');
             grid.innerHTML = '';
+            cells = [];
             for (let i = 0; i < N; i++) {
                 for (let j = 0; j < N; j++) {
                     const cell = document.createElement('div');
                     cell.className = 'cell';
+                    grid.appendChild(cell);
+                    cells.push(cell);
+                }
+            }
+        }
+
+        function renderState(turn) {
+            const state = states[turn];
+            for (let i = 0; i < N; i++) {
+                for (let j = 0; j < N; j++) {
+                    const idx = i * N + j;
+                    const cell = cells[idx];
                     cell.textContent = state.board[i][j];
+                    cell.className = 'cell';
                     if (state.board[i][j] === '@') cell.classList.add('rock');
                     if (/[a-z]/.test(state.board[i][j])) cell.classList.add('ore');
                     if (/[A-Z]/.test(state.board[i][j])) cell.classList.add('hole');
                     if (i === state.player.i && j === state.player.j) cell.classList.add('player');
-                    grid.appendChild(cell);
                 }
             }
+
+            const line = document.getElementById('moveLine');
+            if (state.path) {
+                const { from, to, type } = state.path;
+                const x1 = from.j * 21 + 10.5;
+                const y1 = from.i * 21 + 10.5;
+                const x2 = to.j * 21 + 10.5;
+                const y2 = to.i * 21 + 10.5;
+                line.setAttribute('x1', x1);
+                line.setAttribute('y1', y1);
+                line.setAttribute('x2', x2);
+                line.setAttribute('y2', y2);
+                line.setAttribute('stroke', type === 'carry' ? 'blue' : 'red');
+                line.style.display = 'block';
+            } else {
+                line.style.display = 'none';
+            }
+
             document.getElementById('currentTurn').textContent = turn;
             document.getElementById('currentMove').textContent = turn > 0 ? `(${moves[turn - 1].action} ${moves[turn - 1].dir})` : '';
             document.getElementById('score').textContent = calculateScore(turn);
@@ -198,48 +250,56 @@
             parseInput();
             parseOutput();
             simulate();
+            initGrid();
             renderState(0);
         }
 
         function toggleAnimation() {
-            if (animationInterval) {
-                clearInterval(animationInterval);
-                animationInterval = null;
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
+                animationFrame = null;
             } else {
                 let turn = parseInt(document.getElementById('turnSlider').value);
                 const speed = parseInt(document.getElementById('speedSlider').value);
-                animationInterval = setInterval(() => {
-                    if (turn > moves.length) {
-                        clearInterval(animationInterval);
-                        animationInterval = null;
-                    } else {
-                        renderState(turn++);
+                let lastTime = null;
+
+                function animate(timestamp) {
+                    if (!lastTime) lastTime = timestamp;
+                    if (timestamp - lastTime >= speed) {
+                        if (turn > moves.length) {
+                            animationFrame = null;
+                        } else {
+                            renderState(turn++);
+                            lastTime = timestamp;
+                        }
                     }
-                }, speed);
+                    if (animationFrame) animationFrame = requestAnimationFrame(animate);
+                }
+                animationFrame = requestAnimationFrame(animate);
             }
         }
 
         function stepForward() {
-            if (animationInterval) toggleAnimation();
+            if (animationFrame) toggleAnimation();
             let turn = parseInt(document.getElementById('turnSlider').value);
             if (turn < moves.length) renderState(turn + 1);
         }
 
         function stepBack() {
-            if (animationInterval) toggleAnimation();
+            if (animationFrame) toggleAnimation();
             let turn = parseInt(document.getElementById('turnSlider').value);
             if (turn > 0) renderState(turn - 1);
         }
 
         document.getElementById('turnSlider').oninput = (e) => {
-            if (animationInterval) toggleAnimation();
+            if (animationFrame) toggleAnimation();
             renderState(parseInt(e.target.value));
         };
         document.getElementById('input').onchange = update;
         document.getElementById('output').onchange = update;
         document.getElementById('speedSlider').onchange = () => {
-            if (animationInterval) {
-                clearInterval(animationInterval);
+            if (animationFrame) {
+                cancelAnimationFrame(animationFrame);
                 toggleAnimation();
             }
         };
